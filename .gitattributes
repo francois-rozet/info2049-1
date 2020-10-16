@@ -1,0 +1,8 @@
+###############
+# LaTeX files #
+###############
+
+*.tex linguist-vendored
+*.cls linguist-vendored
+*.sty linguist-vendored
+*.bib linguist-vendored
