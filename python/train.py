@@ -4,14 +4,16 @@
 # Imports #
 ###########
 
+import collections
+import glob
 import numpy as np
+import os
 import spacy
 import torch
 import torch.nn as nn
 import torch.optim as optim
 import torch.utils.data as data
-import torchtext
-import torchtext.experimental as tt
+import torchtext as tt
 
 from sklearn.metrics import confusion_matrix
 from tqdm import tqdm
@@ -72,12 +74,11 @@ class SentimentNet(nn.Module):
 
 
 class Tokenizer:
-	def __init__(self, lang: str = 'en_core_web_sm', lower: bool = True):
-		self.tokenize = spacy.load(lang).tokenizer
-		self.lower = lower # useless for now
+	def __init__(self, lang: str = 'en_core_web_sm'):
+		self.tokenizer = spacy.load(lang).tokenizer
 
-	def __call__(self, text: str): # -> generator
-		for t in self.tokenize(text):
+	def __call__(self, text: str): # -> generator[str]
+		for t in self.tokenizer(text):
 			yield t.text.lower()
 
 
@@ -85,25 +86,27 @@ class SentimentDataset(data.Dataset):
 	def __init__(
 		self,
 		data: list,
-		vocab: torchtext.vocab.Vocab,
-		tokenize, # callable
+		vocab: tt.vocab.Vocab,
+		tokenizer, # callable[str] -> iterable[str]
 		positive: str = 'pos'
 	):
 		super().__init__()
 
 		self.data = data
 		self.vocab = vocab
-		self.tokenize = tokenize
+		self.tokenizer = tokenizer
 		self.positive = positive
 
 	def __len__(self) -> int:
 		return len(self.data)
 
-	def __getitem__(self, idx): # -> tuple[torch.Tensor, torch.Tensor]
-		label = 1. if self.data[idx][0] == self.positive else 0.
-		text = [self.vocab[x] for x in self.tokenize(self.data[idx][1])]
+	def __getitem__(self, idx): # -> tuple[torch.Tensor, int]
+		text, label = self.data[idx]
 
-		return torch.tensor(text), torch.tensor(label)
+		return (
+			torch.tensor([self.vocab[t] for t in self.tokenizer(text)]),
+			1. if label == self.positive else 0.
+		)
 
 
 class Collator:
@@ -118,20 +121,54 @@ class Collator:
 
 		order = torch.argsort(lengths, descending=True)
 
+		lengths = lengths[order]
 		texts = nn.utils.rnn.pad_sequence(
 			texts,
 			batch_first=self.batch_first,
 			padding_value=self.pad_idx
 		)[order]
-
 		labels = torch.tensor(labels)[order]
 
-		return texts, lengths[order], labels
+		return texts, lengths, labels
 
 
 ############
 # Function #
 ############
+
+def IMDB(
+	root: str = '.data',
+	splits=['train', 'test'], # list[str]
+	labels=['neg', 'pos'] # list[str]
+): # -> list[list[tuple[str, str]]]
+	# Download
+	path = tt.datasets.IMDB.download(root)
+
+	# Train
+	data = []
+
+	for split in splits:
+		data.append([])
+
+		for label in labels:
+			for file in glob.glob(os.path.join(path, split, label, '*.txt')):
+				with open(file, encoding='utf8') as f:
+					data[-1].append((f.read(), label))
+
+	return data
+
+
+def freqs(
+	data, # list[tuple[str, str]]
+	tokenizer # callable[str] -> iterable[str]
+) -> collections.Counter:
+	counter = collections.Counter()
+
+	for text, _ in tqdm(data):
+		counter.update(tokenizer(text))
+
+	return counter
+
 
 def epoch(
 	model: nn.Module,
@@ -199,18 +236,18 @@ def main(
 	# Dataset
 	tokenizer = Tokenizer()
 
-	trainset, testset = tt.datasets.IMDB(ngrams=1, tokenizer=tokenizer)
+	traindata, testdata = IMDB()
 
-	vocab = torchtext.vocab.Vocab(
-		counter=trainset.vocab.freqs,
+	vocab = tt.vocab.Vocab(
+		counter=freqs(traindata, tokenizer),
 		max_size=vocab_size
 	)
 
-	trainset = SentimentDataset(trainset.data, vocab, tokenizer)
-	testset = SentimentDataset(testset.data, vocab, tokenizer)
+	trainset = SentimentDataset(traindata, vocab, tokenizer)
+	testset = SentimentDataset(testdata, vocab, tokenizer)
 
 	# Embedding
-	glove = torchtext.vocab.GloVe('6B', dim=embedding_size)
+	glove = tt.vocab.GloVe('6B', dim=embedding_size)
 	vocab.set_vectors(glove.stoi, glove.vectors, dim=embedding_size)
 
 	# DataLoaders
