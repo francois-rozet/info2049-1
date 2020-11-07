@@ -21,7 +21,7 @@ from tqdm import tqdm
 # Classes #
 ###########
 
-class VanillaRNN(nn.Module):
+class SentimentNet(nn.Module):
 	def __init__(
 		self,
 		vocab_size: int,
@@ -30,9 +30,9 @@ class VanillaRNN(nn.Module):
 		output_size: int,
 		pad_idx: int,
 		num_layers: int = 1,
-		nonlinearity: str = 'tanh',
 		dropout: float = 0,
-		bidirectional: bool = False
+		bidirectional: bool = False,
+		recnet: str = 'RNN'
 	):
 		super().__init__()
 
@@ -42,15 +42,15 @@ class VanillaRNN(nn.Module):
 			padding_idx=pad_idx
 		)
 
-		self.rnn = nn.RNN(
+		self.rec = (nn.RNN if recnet == 'RNN' else nn.LSTM)(
 			input_size=embedding_size,
 			hidden_size=hidden_size,
 			num_layers=num_layers,
-			nonlinearity=nonlinearity,
 			dropout=dropout,
 			bidirectional=bidirectional,
 			batch_first=True
 		)
+		self.get = (lambda x: x[1]) if recnet == 'RNN' else (lambda x: x[1][0])
 
 		self.lin = nn.Linear(
 			hidden_size * num_layers * (2 if bidirectional else 1),
@@ -64,7 +64,7 @@ class VanillaRNN(nn.Module):
 			lengths=lengths,
 			batch_first=True
 		)
-		_, x = self.rnn(x)
+		x = self.get(self.rec(x))
 
 		x = self.lin(x.permute(1, 0, 2).flatten(1)).squeeze(1)
 
@@ -179,9 +179,9 @@ def main(
 	embedding_size: int = 50,
 	hidden_size: int = 256,
 	num_layers: int = 1,
-	nonlinearity: str = 'tanh',
 	dropout: float = 0,
 	bidirectional: bool = False,
+	recnet: str = 'RNN',
 	batch_size: int = 64,
 	epochs: int = 5,
 	learning_rate: float = 1e-3,
@@ -234,16 +234,16 @@ def main(
 	)
 
 	# Model
-	model = VanillaRNN(
+	model = SentimentNet(
 		vocab_size=vocab_size,
 		embedding_size=embedding_size,
 		hidden_size=hidden_size,
 		output_size=1,
 		pad_idx=vocab.stoi['<pad>'],
 		num_layers=num_layers,
-		nonlinearity=nonlinearity,
 		dropout=dropout,
-		bidirectional=bidirectional
+		bidirectional=bidirectional,
+		recnet=recnet
 	)
 	model.embedding.weight.data = vocab.vectors.clone()
 	model.to(device)
@@ -298,9 +298,9 @@ if __name__ == '__main__':
 
 	parser.add_argument('-hidden', type=int, default=256, help='hidden memory size')
 	parser.add_argument('-layers', type=int, default=1, help='number of layers in RNN')
-	parser.add_argument('-nonlinearity', default='tanh', choices=['tanh', 'relu'], help='nonlinearity function in RNN')
 	parser.add_argument('-dropout', type=float, default=0, help='dropout in RNN')
 	parser.add_argument('-bidirectional', default=False, action='store_true', help='bidirectional RNN')
+	parser.add_argument('-recnet', default='RNN', choices=['RNN', 'LSTM'], help='recurrent neural network type')
 
 	parser.add_argument('-epochs', type=int, default=5, help='number of epochs')
 	parser.add_argument('-lrate', type=float, default=1e-3, help='learning rate')
@@ -317,9 +317,9 @@ if __name__ == '__main__':
 		batch_size=args.bsize,
 		hidden_size=args.hidden,
 		num_layers=args.layers,
-		nonlinearity=args.nonlinearity,
 		dropout=args.dropout,
 		bidirectional=args.bidirectional,
+		recnet=args.recnet,
 		epochs=args.epochs,
 		learning_rate=args.lrate,
 		weight_decay=args.wdecay,
