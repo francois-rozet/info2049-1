@@ -1,0 +1,14 @@
+name: sentiment
+channels:
+  - pytorch
+  - defaults
+dependencies:
+  - numpy=1.19.2
+  - pip=20.2.4
+  - python=3.8.5
+  - pytorch=1.7.0
+  - spacy=2.3.2
+  - torchtext=0.8.0
+  - tqdm=4.50.2
+  - pip:
+    - scikit-learn==0.23.2
