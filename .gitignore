@@ -5,6 +5,14 @@
 # macOS
 .DS_Store
 
+###########
+# PyTorch #
+###########
+
+# torchtext
+.data
+.vector_cache
+
 
 ##########
 # Python #
