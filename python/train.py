@@ -8,7 +8,9 @@ import collections
 import glob
 import numpy as np
 import os
+import pandas as pd
 import spacy
+import time
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -28,13 +30,13 @@ class SentimentNet(nn.Module):
 		self,
 		vocab_size: int,
 		embedding_size: int,
-		hidden_size: int,
 		output_size: int,
-		pad_idx: int,
+		pad_idx: int = 1,
+		net: str = 'RNN',
+		hidden_size: int = 256,
 		num_layers: int = 1,
 		dropout: float = 0,
-		bidirectional: bool = False,
-		recnet: str = 'RNN'
+		bidirectional: bool = False
 	):
 		super().__init__()
 
@@ -44,7 +46,7 @@ class SentimentNet(nn.Module):
 			padding_idx=pad_idx
 		)
 
-		self.rec = (nn.RNN if recnet == 'RNN' else nn.LSTM)(
+		self.rec = (nn.RNN if net == 'RNN' else nn.LSTM)(
 			input_size=embedding_size,
 			hidden_size=hidden_size,
 			num_layers=num_layers,
@@ -52,7 +54,7 @@ class SentimentNet(nn.Module):
 			bidirectional=bidirectional,
 			batch_first=True
 		)
-		self.get = (lambda x: x[1]) if recnet == 'RNN' else (lambda x: x[1][0])
+		self.get = (lambda x: x[1]) if net == 'RNN' else (lambda x: x[1][0])
 
 		self.lin = nn.Linear(
 			hidden_size * num_layers * (2 if bidirectional else 1),
@@ -170,7 +172,7 @@ def freqs(
 	return counter
 
 
-def epoch(
+def eval(
 	model: nn.Module,
 	loader: data.DataLoader,
 	device: torch.device,
@@ -212,13 +214,15 @@ def epoch(
 ########
 
 def main(
+	output_file: str = 'stats.csv',
 	vocab_size: int = 25000,
+	embedding: str = 'glove.6B',
 	embedding_size: int = 50,
+	net: str = 'RNN',
 	hidden_size: int = 256,
 	num_layers: int = 1,
 	dropout: float = 0,
 	bidirectional: bool = False,
-	recnet: str = 'RNN',
 	batch_size: int = 64,
 	epochs: int = 5,
 	learning_rate: float = 1e-3,
@@ -274,13 +278,13 @@ def main(
 	model = SentimentNet(
 		vocab_size=vocab_size,
 		embedding_size=embedding_size,
-		hidden_size=hidden_size,
 		output_size=1,
 		pad_idx=vocab.stoi['<pad>'],
+		net=net,
+		hidden_size=hidden_size,
 		num_layers=num_layers,
 		dropout=dropout,
-		bidirectional=bidirectional,
-		recnet=recnet
+		bidirectional=bidirectional
 	)
 	model.embedding.weight.data = vocab.vectors.clone()
 	model.to(device)
@@ -294,35 +298,83 @@ def main(
 	scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=step_size, gamma=gamma)
 
 	# Train
-	for _ in range(epochs):
-		## Train
-		classes, predictions, losses = epoch(
+	stats = []
+
+	for epoch in range(epochs):
+		start = time.time()
+		classes, predictions, losses = eval(
 			model,
 			trainloader,
 			device,
 			criterion,
 			optimizer
 		)
+		stop = time.time()
 
 		losses = np.array(losses)
+		tn, fp, fn, tp = confusion_matrix(classes, predictions).ravel()
 
-		print('Training loss = {} +- {}'.format(losses.mean(), losses.std()))
-		print('Training confusion matrix =\n', confusion_matrix(classes, predictions))
+		stats.append({
+			'embedding': embedding,
+			'embedding_size': embedding_size,
+			'net': net,
+			'hidden_size': hidden_size,
+			'num_layers': num_layers,
+			'dropout': dropout,
+			'bidirectional': int(bidirectional),
+			'type': 'train',
+			'epoch': epoch,
+			'time': (stop - start) / len(trainloader),
+			'loss_mean': losses.mean(),
+			'loss_std': losses.std(),
+			'tn': tn,
+			'fp': fp,
+			'fn': fn,
+			'tp': tp,
+			'precision': tp / (tp + fp),
+			'recall': tp / (tp + fn),
+			'accuracy': (tp + tn) / (tn + fp + fn + tp)
+		})
 
 		scheduler.step()
 
 	# Test
-	classes, predictions, losses = epoch(
+	start = time.time()
+	classes, predictions, losses = eval(
 		model,
 		testloader,
 		device,
 		criterion
 	)
+	stop = time.time()
 
 	losses = np.array(losses)
+	tn, fp, fn, tp = confusion_matrix(classes, predictions).ravel()
 
-	print('Test loss = {} +- {}'.format(losses.mean(), losses.std()))
-	print('Test confusion matrix =\n', confusion_matrix(classes, predictions))
+	stats.append({
+		'embedding': embedding,
+		'embedding_size': embedding_size,
+		'net': net,
+		'hidden_size': hidden_size,
+		'num_layers': num_layers,
+		'dropout': dropout,
+		'bidirectional': int(bidirectional),
+		'type': 'test',
+		'epoch': 0,
+		'time': (stop - start) / len(testloader),
+		'loss_mean': losses.mean(),
+		'loss_std': losses.std(),
+		'tn': tn,
+		'fp': fp,
+		'fn': fn,
+		'tp': tp,
+		'precision': tp / (tp + fp),
+		'recall': tp / (tp + fn),
+		'accuracy': (tp + tn) / (tn + fp + fn + tp)
+	})
+
+	# Export
+	pd.DataFrame(stats).to_csv(output_file, mode='a', index=False)
 
 
 if __name__ == '__main__':
@@ -330,15 +382,19 @@ if __name__ == '__main__':
 
 	parser = argparse.ArgumentParser(description='Train Sentiment Analysis')
 
-	parser.add_argument('-vsize', type=int, default=25000, help='vocab size')
-	parser.add_argument('-bsize', type=int, default=64, help='batch size')
+	parser.add_argument('-o', '--output', default='stats.csv', help='output file')
 
+	parser.add_argument('-vsize', type=int, default=25000, help='vocab size')
+	parser.add_argument('-embedding', default='glove.6B', choices=['glove.6B'], help='embedding')
+	parser.add_argument('-esize', type=int, default=50, help='embedding size')
+
+	parser.add_argument('-net', default='RNN', choices=['RNN', 'LSTM'], help='recurrent neural network type')
 	parser.add_argument('-hidden', type=int, default=256, help='hidden memory size')
 	parser.add_argument('-layers', type=int, default=1, help='number of layers in RNN')
 	parser.add_argument('-dropout', type=float, default=0, help='dropout in RNN')
 	parser.add_argument('-bidirectional', default=False, action='store_true', help='bidirectional RNN')
-	parser.add_argument('-recnet', default='RNN', choices=['RNN', 'LSTM'], help='recurrent neural network type')
 
+	parser.add_argument('-bsize', type=int, default=64, help='batch size')
 	parser.add_argument('-epochs', type=int, default=5, help='number of epochs')
 	parser.add_argument('-lrate', type=float, default=1e-3, help='learning rate')
 	parser.add_argument('-wdecay', type=float, default=0., help='weight decay')
@@ -350,13 +406,16 @@ if __name__ == '__main__':
 	args = parser.parse_args()
 
 	main(
+		output_file=args.output,
 		vocab_size=args.vsize,
-		batch_size=args.bsize,
+		embedding=args.embedding,
+		embedding_size=args.embedding_size,
+		net=args.net,
 		hidden_size=args.hidden,
 		num_layers=args.layers,
 		dropout=args.dropout,
 		bidirectional=args.bidirectional,
-		recnet=args.recnet,
+		batch_size=args.bsize,
 		epochs=args.epochs,
 		learning_rate=args.lrate,
 		weight_decay=args.wdecay,
