@@ -21,6 +21,13 @@ from sklearn.metrics import confusion_matrix
 from tqdm import tqdm
 
 
+##########
+# Global #
+##########
+
+aliases = tt.vocab.pretrained_aliases
+
+
 ###########
 # Classes #
 ###########
@@ -28,8 +35,7 @@ from tqdm import tqdm
 class SentimentNet(nn.Module):
 	def __init__(
 		self,
-		vocab_size: int,
-		embedding_size: int,
+		embedding_shape, # tuple[int, int]
 		output_size: int,
 		pad_idx: int = 1,
 		net: str = 'RNN',
@@ -41,13 +47,13 @@ class SentimentNet(nn.Module):
 		super().__init__()
 
 		self.embedding = nn.Embedding(
-			vocab_size,
-			embedding_size,
+			embedding_shape[0],
+			embedding_shape[1],
 			padding_idx=pad_idx
 		)
 
 		self.rec = (nn.RNN if net == 'RNN' else nn.LSTM)(
-			input_size=embedding_size,
+			input_size=embedding_shape[1],
 			hidden_size=hidden_size,
 			num_layers=num_layers,
 			dropout=dropout,
@@ -216,8 +222,7 @@ def eval(
 def main(
 	output_file: str = 'stats.csv',
 	vocab_size: int = 25000,
-	embedding: str = 'glove.6B',
-	embedding_size: int = 50,
+	embedding: str = 'glove.6B.100d',
 	net: str = 'RNN',
 	hidden_size: int = 256,
 	num_layers: int = 1,
@@ -237,9 +242,8 @@ def main(
 	# Device
 	device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-	# Dataset
+	# Vocabulary
 	tokenizer = Tokenizer()
-
 	traindata, testdata = IMDB()
 
 	vocab = tt.vocab.Vocab(
@@ -247,12 +251,17 @@ def main(
 		max_size=vocab_size
 	)
 
+	# Embedding
+	pretrained = aliases[embedding]()
+	vocab.set_vectors(
+		pretrained.stoi,
+		pretrained.vectors,
+		dim=pretrained.vectors.size(1)
+	)
+
+	# Datasets
 	trainset = SentimentDataset(traindata, vocab, tokenizer)
 	testset = SentimentDataset(testdata, vocab, tokenizer)
-
-	# Embedding
-	glove = tt.vocab.GloVe('6B', dim=embedding_size)
-	vocab.set_vectors(glove.stoi, glove.vectors, dim=embedding_size)
 
 	# DataLoaders
 	collator = Collator(pad_idx=vocab.stoi['<pad>'])
@@ -276,8 +285,7 @@ def main(
 
 	# Model
 	model = SentimentNet(
-		vocab_size=vocab_size,
-		embedding_size=embedding_size,
+		embedding_shape=vocab.vectors.shape,
 		output_size=1,
 		pad_idx=vocab.stoi['<pad>'],
 		net=net,
@@ -316,7 +324,6 @@ def main(
 
 		stats.append({
 			'embedding': embedding,
-			'embedding_size': embedding_size,
 			'net': net,
 			'hidden_size': hidden_size,
 			'num_layers': num_layers,
@@ -353,7 +360,6 @@ def main(
 
 	stats.append({
 		'embedding': embedding,
-		'embedding_size': embedding_size,
 		'net': net,
 		'hidden_size': hidden_size,
 		'num_layers': num_layers,
@@ -385,8 +391,8 @@ if __name__ == '__main__':
 	parser.add_argument('-o', '--output', default='stats.csv', help='output file')
 
 	parser.add_argument('-vsize', type=int, default=25000, help='vocab size')
-	parser.add_argument('-embedding', default='glove.6B', choices=['glove.6B'], help='embedding')
-	parser.add_argument('-esize', type=int, default=50, help='embedding size')
+	parser.add_argument('-embedding', default='glove.6B.100d', choices=list(aliases.keys()), help='embedding alias')
+
 
 	parser.add_argument('-net', default='RNN', choices=['RNN', 'LSTM'], help='recurrent neural network type')
 	parser.add_argument('-hidden', type=int, default=256, help='hidden memory size')
@@ -409,7 +415,6 @@ if __name__ == '__main__':
 		output_file=args.output,
 		vocab_size=args.vsize,
 		embedding=args.embedding,
-		embedding_size=args.embedding_size,
 		net=args.net,
 		hidden_size=args.hidden,
 		num_layers=args.layers,
