@@ -53,7 +53,17 @@ class SentimentNet(nn.Module):
 			padding_idx=pad_idx
 		)
 
-		self.rec = (nn.RNN if net == 'RNN' else nn.LSTM)(
+		if net == 'LSTM':
+			self.rec = nn.LSTM
+			self.get = lambda x: x[1][0]
+		elif net == 'GRU':
+			self.rec = nn.GRU
+			self.get = lambda x: x[1]
+		else:
+			self.rec = nn.RNN
+			self.get = lambda x: x[1]
+
+		self.rec = self.rec(
 			input_size=embedding_shape[1],
 			hidden_size=hidden_size,
 			num_layers=num_layers,
@@ -61,7 +71,6 @@ class SentimentNet(nn.Module):
 			bidirectional=bidirectional,
 			batch_first=True
 		)
-		self.get = (lambda x: x[1]) if net == 'RNN' else (lambda x: x[1][0])
 
 		self.lin = nn.Linear(
 			hidden_size * num_layers * (2 if bidirectional else 1),
@@ -463,7 +472,7 @@ if __name__ == '__main__':
 	parser.add_argument('-vsize', type=int, default=25000, help='vocab size')
 	parser.add_argument('-embedding', default='glove.6B.100d', choices=list(aliases.keys()), help='embedding alias')
 
-	parser.add_argument('-net', default='RNN', choices=['RNN', 'LSTM'], help='recurrent neural network type')
+	parser.add_argument('-net', default='RNN', choices=['RNN', 'LSTM', 'GRU'], help='recurrent neural network type')
 	parser.add_argument('-hidden', type=int, default=256, help='hidden memory size')
 	parser.add_argument('-layers', type=int, default=1, help='number of layers in RNN')
 	parser.add_argument('-dropout', type=float, default=0, help='dropout in RNN')
