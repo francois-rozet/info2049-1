@@ -17,7 +17,8 @@ import torch.optim as optim
 import torch.utils.data as data
 import torchtext as tt
 
-from sklearn.metrics import confusion_matrix
+from nltk.tree import Tree
+from sklearn.metrics import accuracy_score, classification_report
 from tqdm import tqdm
 
 
@@ -67,6 +68,8 @@ class SentimentNet(nn.Module):
 			output_size
 		)
 
+		self.softplus = nn.Softplus()
+
 	def forward(self, input: torch.Tensor, lengths: torch.Tensor) -> torch.Tensor:
 		x = self.embedding(input)
 		x = nn.utils.rnn.pack_padded_sequence(
@@ -76,9 +79,61 @@ class SentimentNet(nn.Module):
 		)
 		x = self.get(self.rec(x))
 
-		x = self.lin(x.permute(1, 0, 2).flatten(1)).squeeze(1)
+		x = self.lin(x.permute(1, 0, 2).flatten(1))
+
+		x = torch.cat([
+			x[:, :1],
+			self.softplus(x[:, 1:])
+		], dim=1).cumsum(dim=1)
 
 		return x
+
+	@staticmethod
+	def prediction(output: torch.Tensor) -> torch.Tensor:
+		output = torch.cat([
+			torch.zeros((output.size(0), 1), device=output.device),
+			torch.sigmoid(output),
+			torch.ones((output.size(0), 1), device=output.device)
+		], dim=1)
+
+		return output[:, 1:] - output[:, :-1]
+
+
+class CLWithLogitsLoss(nn.Module):
+	r"""Cumulative link with logits loss
+
+	References:
+		[1] On the consistency of ordinal regression methods
+		(Pedregosa et al., 2017)
+		https://dl.acm.org/doi/abs/10.5555/3122009.3153011
+
+	Note:
+		For (N, 1) inputs, CLWithLogitsLoss is equivalent to BCEWithLogitsLoss.
+	"""
+
+	def __init__(self, reduction: str = 'mean'):
+		super().__init__()
+
+		self.reduction = reduction
+
+	def forward(self, input: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+		exps = input.exp()
+		logs = (1. + exps).log()
+
+		neg_likelihoods = torch.cat([
+			logs[:, :1] - input[:, :1], # -log(p(0 < x < 1))
+			logs[:, 1:] + logs[:, :-1] - (exps[:, 1:] - exps[:, :-1]).log(), # -log(p(i-1 < x < i))
+			logs[:, -1:] # -log(p(k-1 < x < k))
+		], dim=1)
+
+		loss = torch.gather(neg_likelihoods, 1, target.unsqueeze(1)).squeeze(1)
+
+		if self.reduction == 'mean':
+			loss = loss.mean()
+		elif self.reduction == 'sum':
+			loss = loss.sum()
+
+		return loss
 
 
 class Tokenizer:
@@ -95,25 +150,23 @@ class SentimentDataset(data.Dataset):
 		self,
 		data: list,
 		vocab: tt.vocab.Vocab,
-		tokenizer, # callable[str] -> iterable[str]
-		positive: str = 'pos'
+		tokenizer # callable[str] -> iterable[str]
 	):
 		super().__init__()
 
 		self.data = data
 		self.vocab = vocab
 		self.tokenizer = tokenizer
-		self.positive = positive
 
 	def __len__(self) -> int:
 		return len(self.data)
 
 	def __getitem__(self, idx): # -> tuple[torch.Tensor, int]
-		text, label = self.data[idx]
+		target, text = self.data[idx]
 
 		return (
 			torch.tensor([self.vocab[t] for t in self.tokenizer(text)]),
-			1. if label == self.positive else 0.
+			target
 		)
 
 
@@ -123,7 +176,7 @@ class Collator:
 		self.batch_first = batch_first
 
 	def __call__(self, batch: list):
-		texts, labels = zip(*batch)
+		texts, targets = zip(*batch)
 
 		lengths = torch.tensor([len(x) for x in texts])
 
@@ -135,44 +188,56 @@ class Collator:
 			batch_first=self.batch_first,
 			padding_value=self.pad_idx
 		)[order]
-		labels = torch.tensor(labels)[order]
+		targets = torch.tensor(targets)[order]
 
-		return texts, lengths, labels
+		return texts, lengths, targets
 
 
 ############
 # Function #
 ############
 
-def IMDB(
-	root: str = '.data',
-	splits=['train', 'test'], # list[str]
-	labels=['neg', 'pos'] # list[str]
-): # -> list[list[tuple[str, str]]]
+def IMDB(root: str = '.data'): # -> tuple[list[str], dict[str, list[tuple[int, str]]]]
 	# Download
 	path = tt.datasets.IMDB.download(root)
 
-	# Train
-	data = []
+	# Load
+	splits = {'train': [], 'test': []}
+	labels = ['neg', 'pos']
 
 	for split in splits:
-		data.append([])
-
-		for label in labels:
+		for i, label in enumerate(labels):
 			for file in glob.glob(os.path.join(path, split, label, '*.txt')):
 				with open(file, encoding='utf8') as f:
-					data[-1].append((f.read(), label))
+					splits[split].append((i, f.read()))
 
-	return data
+	return labels, splits
+
+
+def SST(root: str = '.data'):
+	# Download
+	path = tt.datasets.SST.download(root)
+
+	# Load
+	splits = {'train': [], 'test': []}
+	labels = ['very-negative', 'negative', 'neutral', 'positive', 'very-positive']
+
+	for split in splits:
+		with open(os.path.join(path, split + '.txt')) as f:
+			for line in f:
+				tree = Tree.fromstring(line)
+				splits[split].append((int(tree.label()), ' '.join(tree.leaves())))
+
+	return labels, splits
 
 
 def freqs(
-	data, # list[tuple[str, str]]
+	data, # list[tuple[int, str]]
 	tokenizer # callable[str] -> iterable[str]
 ) -> collections.Counter:
 	counter = collections.Counter()
 
-	for text, _ in tqdm(data):
+	for _, text in tqdm(data):
 		counter.update(tokenizer(text))
 
 	return counter
@@ -183,11 +248,10 @@ def eval(
 	loader: data.DataLoader,
 	device: torch.device,
 	criterion: nn.Module = None,
-	optimizer: optim.Optimizer = None,
-	head: nn.Module = nn.Sigmoid()
+	optimizer: optim.Optimizer = None
 ): # -> tuple[list, list, list]
-	classes = []
 	predictions = []
+	labels = []
 	losses = []
 
 	if optimizer is None:
@@ -195,11 +259,11 @@ def eval(
 	else:
 		model.train()
 
-	for inputs, lengths, labels in tqdm(loader):
+	for inputs, lengths, targets in tqdm(loader):
 		outputs = model(inputs.to(device), lengths)
 
 		if criterion is not None:
-			loss = criterion(outputs, labels.to(device))
+			loss = criterion(outputs, targets.to(device))
 			losses.append(loss.tolist())
 
 		if optimizer is not None:
@@ -207,12 +271,10 @@ def eval(
 			loss.backward()
 			optimizer.step()
 
-		outputs = head(outputs).round()
+		predictions.extend(model.prediction(outputs).argmax(dim=1).tolist())
+		labels.extend(targets.tolist())
 
-		classes.extend(labels.tolist())
-		predictions.extend(outputs.tolist())
-
-	return classes, predictions, losses
+	return predictions, labels, losses
 
 
 ########
@@ -221,6 +283,7 @@ def eval(
 
 def main(
 	output_file: str = 'stats.csv',
+	dataset: str = 'IMDB',
 	vocab_size: int = 25000,
 	embedding: str = 'glove.6B.100d',
 	net: str = 'RNN',
@@ -244,7 +307,13 @@ def main(
 
 	# Vocabulary
 	tokenizer = Tokenizer()
-	traindata, testdata = IMDB()
+
+	if dataset == 'IMDB':
+		labels, splits = IMDB()
+	else: # dataset == 'SST'
+		labels, splits = SST()
+
+	traindata, testdata = splits['train'], splits['test']
 
 	vocab = tt.vocab.Vocab(
 		counter=freqs(traindata, tokenizer),
@@ -286,7 +355,7 @@ def main(
 	# Model
 	model = SentimentNet(
 		embedding_shape=vocab.vectors.shape,
-		output_size=1,
+		output_size=len(labels) - 1,
 		pad_idx=vocab.stoi['<pad>'],
 		net=net,
 		hidden_size=hidden_size,
@@ -298,7 +367,7 @@ def main(
 	model.to(device)
 
 	# Criterion
-	criterion = nn.BCEWithLogitsLoss()
+	criterion = CLWithLogitsLoss()
 	criterion.to(device)
 
 	# Optimizer
@@ -310,7 +379,7 @@ def main(
 
 	for epoch in range(epochs):
 		start = time.time()
-		classes, predictions, losses = eval(
+		predictions, targets, losses = eval(
 			model,
 			trainloader,
 			device,
@@ -320,9 +389,12 @@ def main(
 		stop = time.time()
 
 		losses = np.array(losses)
-		tn, fp, fn, tp = confusion_matrix(classes, predictions).ravel()
+		accuracy = accuracy_score(targets, predictions)
+		report = classification_report(targets, predictions, output_dict=True)['weighted avg']
 
 		stats.append({
+			'dataset': dataset,
+			'vocab_size': vocab_size,
 			'embedding': embedding,
 			'net': net,
 			'hidden_size': hidden_size,
@@ -334,20 +406,17 @@ def main(
 			'time': (stop - start) / len(trainloader),
 			'loss_mean': losses.mean(),
 			'loss_std': losses.std(),
-			'tn': tn,
-			'fp': fp,
-			'fn': fn,
-			'tp': tp,
-			'precision': tp / (tp + fp),
-			'recall': tp / (tp + fn),
-			'accuracy': (tp + tn) / (tn + fp + fn + tp)
+			'precision': report['precision'],
+			'recall': report['recall'],
+			'f1-score': report['f1-score'],
+			'accuracy': accuracy
 		})
 
 		scheduler.step()
 
 	# Test
 	start = time.time()
-	classes, predictions, losses = eval(
+	predictions, targets, losses = eval(
 		model,
 		testloader,
 		device,
@@ -356,9 +425,12 @@ def main(
 	stop = time.time()
 
 	losses = np.array(losses)
-	tn, fp, fn, tp = confusion_matrix(classes, predictions).ravel()
+	accuracy = accuracy_score(targets, predictions)
+	report = classification_report(targets, predictions, output_dict=True)['weighted avg']
 
 	stats.append({
+		'dataset': dataset,
+		'vocab_size': vocab_size,
 		'embedding': embedding,
 		'net': net,
 		'hidden_size': hidden_size,
@@ -370,13 +442,10 @@ def main(
 		'time': (stop - start) / len(testloader),
 		'loss_mean': losses.mean(),
 		'loss_std': losses.std(),
-		'tn': tn,
-		'fp': fp,
-		'fn': fn,
-		'tp': tp,
-		'precision': tp / (tp + fp),
-		'recall': tp / (tp + fn),
-		'accuracy': (tp + tn) / (tn + fp + fn + tp)
+		'precision': report['precision'],
+		'recall': report['recall'],
+		'f1-score': report['f1-score'],
+		'accuracy': accuracy
 	})
 
 	# Export
@@ -390,9 +459,9 @@ if __name__ == '__main__':
 
 	parser.add_argument('-o', '--output', default='stats.csv', help='output file')
 
+	parser.add_argument('-dataset', default='IMDB', choices=['IMDB', 'SST'], help='dataset')
 	parser.add_argument('-vsize', type=int, default=25000, help='vocab size')
 	parser.add_argument('-embedding', default='glove.6B.100d', choices=list(aliases.keys()), help='embedding alias')
-
 
 	parser.add_argument('-net', default='RNN', choices=['RNN', 'LSTM'], help='recurrent neural network type')
 	parser.add_argument('-hidden', type=int, default=256, help='hidden memory size')
@@ -413,6 +482,7 @@ if __name__ == '__main__':
 
 	main(
 		output_file=args.output,
+		dataset=args.dataset,
 		vocab_size=args.vsize,
 		embedding=args.embedding,
 		net=args.net,
