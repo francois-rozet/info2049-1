@@ -43,7 +43,8 @@ class SentimentNet(nn.Module):
 		hidden_size: int = 256,
 		num_layers: int = 1,
 		dropout: float = 0,
-		bidirectional: bool = False
+		bidirectional: bool = False,
+		attention: bool = False
 	):
 		super().__init__()
 
@@ -55,13 +56,10 @@ class SentimentNet(nn.Module):
 
 		if net == 'LSTM':
 			self.rec = nn.LSTM
-			self.get = lambda x: x[1][0]
 		elif net == 'GRU':
 			self.rec = nn.GRU
-			self.get = lambda x: x[1]
 		else:
 			self.rec = nn.RNN
-			self.get = lambda x: x[1]
 
 		self.rec = self.rec(
 			input_size=embedding_shape[1],
@@ -72,30 +70,57 @@ class SentimentNet(nn.Module):
 			batch_first=True
 		)
 
+		self.attention = attention
+		self.num_directions = 2 if bidirectional else 1
+
 		self.lin = nn.Linear(
-			hidden_size * num_layers * (2 if bidirectional else 1),
+			hidden_size * self.num_directions,
 			output_size
 		)
 
+		self.scale = float(np.sqrt(self.lin.in_features))
+
+		self.softmax = nn.Softmax(dim=-1)
 		self.softplus = nn.Softplus()
 
 	def forward(self, input: torch.Tensor, lengths: torch.Tensor) -> torch.Tensor:
-		x = self.embedding(input)
-		x = nn.utils.rnn.pack_padded_sequence(
-			x,
+		# Embedding
+		vector = self.embedding(input)
+		vector = nn.utils.rnn.pack_padded_sequence(
+			vector,
 			lengths=lengths,
 			batch_first=True
 		)
-		x = self.get(self.rec(x))
 
-		x = self.lin(x.permute(1, 0, 2).flatten(1))
+		# Encoder
+		outputs, hidden = self.rec(vector)
 
-		x = torch.cat([
-			x[:, :1],
-			self.softplus(x[:, 1:])
+		if type(hidden) is tuple: # LSTM
+			hidden = hidden[0]
+
+		hidden = hidden[-self.num_directions:].transpose(0, 1).flatten(1) # batch_first
+
+		# Attention
+		if self.attention:
+			outputs, _ = torch.nn.utils.rnn.pad_packed_sequence(
+				outputs,
+				batch_first=True
+			)
+
+			energy = torch.bmm(hidden.unsqueeze(1), outputs.transpose(1, 2))
+			energy = self.softmax(energy / self.scale)
+
+			hidden = torch.bmm(energy, outputs).squeeze(1)
+
+		# Decoder
+		logits = self.lin(hidden)
+
+		logits = torch.cat([
+			logits[:, :1],
+			self.softplus(logits[:, 1:])
 		], dim=1).cumsum(dim=1)
 
-		return x
+		return logits
 
 	@staticmethod
 	def prediction(output: torch.Tensor) -> torch.Tensor:
@@ -300,6 +325,7 @@ def main(
 	num_layers: int = 1,
 	dropout: float = 0,
 	bidirectional: bool = False,
+	attention: bool = False,
 	batch_size: int = 64,
 	epochs: int = 5,
 	learning_rate: float = 1e-3,
@@ -370,7 +396,8 @@ def main(
 		hidden_size=hidden_size,
 		num_layers=num_layers,
 		dropout=dropout,
-		bidirectional=bidirectional
+		bidirectional=bidirectional,
+		attention=attention
 	)
 	model.embedding.weight.data = vocab.vectors.clone()
 	model.to(device)
@@ -411,6 +438,7 @@ def main(
 			'num_layers': num_layers,
 			'dropout': dropout,
 			'bidirectional': int(bidirectional),
+			'attention': int(attention),
 			'type': 'train',
 			'epoch': epoch,
 			'time': (stop - start) / len(trainloader),
@@ -447,6 +475,7 @@ def main(
 			'num_layers': num_layers,
 			'dropout': dropout,
 			'bidirectional': int(bidirectional),
+			'attention': int(attention),
 			'type': 'test',
 			'epoch': epoch,
 			'time': (stop - start) / len(testloader),
@@ -478,6 +507,7 @@ if __name__ == '__main__':
 	parser.add_argument('-layers', type=int, default=1, help='number of layers in RNN')
 	parser.add_argument('-dropout', type=float, default=0, help='dropout in RNN')
 	parser.add_argument('-bidirectional', default=False, action='store_true', help='bidirectional RNN')
+	parser.add_argument('-attention', default=False, action='store_true', help='attention in RNN')
 
 	parser.add_argument('-bsize', type=int, default=64, help='batch size')
 	parser.add_argument('-epochs', type=int, default=5, help='number of epochs')
@@ -500,6 +530,7 @@ if __name__ == '__main__':
 		num_layers=args.layers,
 		dropout=args.dropout,
 		bidirectional=args.bidirectional,
+		attention=args.attention,
 		batch_size=args.bsize,
 		epochs=args.epochs,
 		learning_rate=args.lrate,
