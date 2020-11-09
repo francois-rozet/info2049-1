@@ -400,6 +400,7 @@ def main(
 		attention=attention
 	)
 	model.embedding.weight.data = vocab.vectors.clone()
+	model.embedding.weight.requires_grad = False
 	model.to(device)
 
 	# Criterion
