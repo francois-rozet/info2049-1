@@ -1,6 +1,6 @@
 workers = 8
 time = '1:00:00'
-output = '~/scripts/stats.csv'
+output = '~/report.csv'
 
 content = """#!/usr/bin/env bash
 #
@@ -20,7 +20,7 @@ conda activate sentiment
 
 # Run your Python script
 cd ~/info2049-1/python
-python train.py {}
+python report.py {}
 """
 
 run = ''

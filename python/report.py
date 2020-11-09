@@ -291,7 +291,7 @@ def eval(
 ########
 
 def main(
-	output_file: str = 'stats.csv',
+	output_file: str = 'report.csv',
 	dataset: str = 'IMDB',
 	vocab_size: int = 25000,
 	embedding: str = 'glove.6B.100d',
@@ -383,10 +383,11 @@ def main(
 	optimizer = optim.Adam(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
 	scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=step_size, gamma=gamma)
 
-	# Train
+	# Report
 	stats = []
 
 	for epoch in range(epochs):
+		## Train
 		start = time.time()
 		predictions, targets, losses = eval(
 			model,
@@ -399,7 +400,7 @@ def main(
 
 		losses = np.array(losses)
 		accuracy = accuracy_score(targets, predictions)
-		report = classification_report(targets, predictions, output_dict=True)['weighted avg']
+		report = classification_report(targets, predictions, zero_division=0, output_dict=True)['weighted avg']
 
 		stats.append({
 			'dataset': dataset,
@@ -423,39 +424,39 @@ def main(
 
 		scheduler.step()
 
-	# Test
-	start = time.time()
-	predictions, targets, losses = eval(
-		model,
-		testloader,
-		device,
-		criterion
-	)
-	stop = time.time()
+		## Test
+		start = time.time()
+		predictions, targets, losses = eval(
+			model,
+			testloader,
+			device,
+			criterion
+		)
+		stop = time.time()
 
-	losses = np.array(losses)
-	accuracy = accuracy_score(targets, predictions)
-	report = classification_report(targets, predictions, output_dict=True)['weighted avg']
+		losses = np.array(losses)
+		accuracy = accuracy_score(targets, predictions)
+		report = classification_report(targets, predictions, zero_division=0, output_dict=True)['weighted avg']
 
-	stats.append({
-		'dataset': dataset,
-		'vocab_size': vocab_size,
-		'embedding': embedding,
-		'net': net,
-		'hidden_size': hidden_size,
-		'num_layers': num_layers,
-		'dropout': dropout,
-		'bidirectional': int(bidirectional),
-		'type': 'test',
-		'epoch': 0,
-		'time': (stop - start) / len(testloader),
-		'loss_mean': losses.mean(),
-		'loss_std': losses.std(),
-		'precision': report['precision'],
-		'recall': report['recall'],
-		'f1-score': report['f1-score'],
-		'accuracy': accuracy
-	})
+		stats.append({
+			'dataset': dataset,
+			'vocab_size': vocab_size,
+			'embedding': embedding,
+			'net': net,
+			'hidden_size': hidden_size,
+			'num_layers': num_layers,
+			'dropout': dropout,
+			'bidirectional': int(bidirectional),
+			'type': 'test',
+			'epoch': epoch,
+			'time': (stop - start) / len(testloader),
+			'loss_mean': losses.mean(),
+			'loss_std': losses.std(),
+			'precision': report['precision'],
+			'recall': report['recall'],
+			'f1-score': report['f1-score'],
+			'accuracy': accuracy
+		})
 
 	# Export
 	pd.DataFrame(stats).to_csv(output_file, mode='a', index=False)
@@ -466,7 +467,7 @@ if __name__ == '__main__':
 
 	parser = argparse.ArgumentParser(description='Train Sentiment Analysis')
 
-	parser.add_argument('-o', '--output', default='stats.csv', help='output file')
+	parser.add_argument('-o', '--output', default='report.csv', help='output file')
 
 	parser.add_argument('-dataset', default='IMDB', choices=['IMDB', 'SST'], help='dataset')
 	parser.add_argument('-vsize', type=int, default=25000, help='vocab size')
