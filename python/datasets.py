@@ -5,6 +5,7 @@
 ###########
 
 import collections
+import gensim.downloader
 import glob
 import os
 import spacy
@@ -13,19 +14,14 @@ import torch.nn as nn
 import torch.utils.data as data
 import torchtext as tt
 
+from functools import partial
 from nltk.tree import Tree
 from tqdm import tqdm
 
-##########
-# Global #
-##########
 
-aliases = tt.vocab.pretrained_aliases
-
-
-#############
-# Functions #
-#############
+############
+# Datasets #
+############
 
 def IMDB(root: str = '.data'): # -> tuple[list[str], dict[str, list[tuple[int, str]]]]
 	r"""Load/download the IMDB dataset.
@@ -89,11 +85,56 @@ def SST(root: str = '.data'):
 	return labels, splits
 
 
+##############
+# Embeddings #
+##############
+
+class Word2Vec(tt.vocab.Vectors):
+	r"""Word2Vec embedding
+
+	Args:
+		key: embedding key in Word2Vec.table
+		unk_init: intializer of unknown word vectors
+		max_vectors: max number of pre-trained vectors loaded
+
+	Note:
+		Based on 'gensim.downloader' module.
+	"""
+
+	table = {
+		'google': 'word2vec-google-news-300'
+	}
+
+	def __init__(
+		self,
+		key: str = 'google',
+		unk_init=None, # callable -> torch.Tensor
+		max_vectors: int = None
+	):
+		model = gensim.downloader.load(self.table[key])
+		vectors = model.vectors
+		tokens = model.vocab.keys()
+
+		if max_vectors is None:
+			max_vectors = len(vectors)
+
+		self.vectors = torch.tensor(vectors[:max_vectors])
+		self.dim = self.vectors.size(1)
+		self.itos = []
+		self.stoi = {}
+
+		for i, token in zip(range(max_vectors), tokens):
+			self.itos.append(token)
+			self.stoi[token] = i
+
+		self.unk_init = torch.Tensor.zero_ if unk_init is None else unk_init
+
+
+aliases = tt.vocab.pretrained_aliases
+aliases['word2vec.google.300d'] = partial(Word2Vec, key='google', max_vectors=int(2e5))
+
 def load_embedding(embedding: str):
-	try:
-		return aliases[embedding]()
-	except Exception:
-		return None
+	return aliases[embedding]()
 
 
 ###########

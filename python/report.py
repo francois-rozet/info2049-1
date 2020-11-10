@@ -123,8 +123,9 @@ def main(
 	vocab.set_vectors(
 		pretrained.stoi,
 		pretrained.vectors,
-		dim=pretrained.vectors.size(1)
+		dim=pretrained.dim
 	)
+	del pretrained
 
 	# Datasets
 	trainset = datasets.SentimentDataset(traindata, vocab, tokenizer)

@@ -11,6 +11,7 @@ dependencies:
   - torchtext=0.8.0
   - tqdm=4.50.2
   - pip:
+    - gensim==3.8.3
     - nltk==3.5
     - pandas==1.1.4
     - scikit-learn==0.23.2

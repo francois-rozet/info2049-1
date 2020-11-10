@@ -27,7 +27,7 @@ run = ''
 
 for dataset in ['IMDB', 'SST']:
 	for vsize in [25000, 50000]:
-		for embedding in ['glove.6B.100d', 'glove.6B.300d', 'fasttext.simple.300d']:
+		for embedding in ['word2vec.google.300d', 'glove.6B.100d', 'glove.6B.300d', 'fasttext.simple.300d']:
 			for net in ['RNN', 'LSTM', 'GRU']:
 				for hidden in [64, 256]:
 					for layers in [1, 2]:
