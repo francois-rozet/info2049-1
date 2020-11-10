@@ -1,8 +1,5 @@
-###############
-# LaTeX files #
-###############
+###########
+# IPython #
+###########
 
-*.tex linguist-vendored
-*.cls linguist-vendored
-*.sty linguist-vendored
-*.bib linguist-vendored
+*.ipynb linguist-vendored
