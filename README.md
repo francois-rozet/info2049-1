@@ -34,7 +34,7 @@ python datasets.py -d IMDB -e glove.6B.100d fasttext.simple.300d
 
 ## Getting started
 
-The main script is [`report.py`](python/report.py). It takes settings and parameters as arguments and produces a `CSV` report of training statistics such as time-per-iteration, loss, accuracy, etc.
+The main script is [`report.py`](python/report.py). It takes settings and parameters as arguments and produces a `CSV` report of training statistics such as speed (iter/sec), loss, accuracy, etc.
 
 ```bash
 python report.py output.csv -dataset IMDB -net GRU -embedding glove.6B.100d -bidirectional -attention
