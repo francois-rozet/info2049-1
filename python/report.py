@@ -89,7 +89,7 @@ def main(
 	bidirectional: bool = False,
 	attention: bool = False,
 	batch_size: int = 64,
-	epochs: int = 5,
+	epochs: int = 10,
 	learning_rate: float = 1e-3,
 	weight_decay: float = 0.,
 	step_size: int = 5,
@@ -277,7 +277,7 @@ if __name__ == '__main__':
 	parser.add_argument('-attention', default=False, action='store_true', help='attention in RNN')
 
 	parser.add_argument('-bsize', type=int, default=64, help='batch size')
-	parser.add_argument('-epochs', type=int, default=5, help='number of epochs')
+	parser.add_argument('-epochs', type=int, default=10, help='number of epochs')
 	parser.add_argument('-lrate', type=float, default=1e-3, help='learning rate')
 	parser.add_argument('-wdecay', type=float, default=0., help='weight decay')
 	parser.add_argument('-step-size', type=int, default=5, help='scheduler step size')
