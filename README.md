@@ -4,7 +4,7 @@ Project realized as part of the *Web and text analytics* course given by **Ashwi
 
 The project consists in analyzing the influence of various word embeddings and network architectures/hyperparameters on the [Sentiment Analysis](https://en.wikipedia.org/wiki/Sentiment_analysis) task.
 
-All the raw measures that were performed are provided in the [`embeddings.csv`](results/csv/embeddings.csv) and [`hyperparameters.csv`](results/csv/hyperparameters.csv) files. They are also showcased and analyzed in a [notebook](results/notebook.ipynb).
+All the raw measures that were performed are provided in the [`embeddings.csv`](products/csv/embeddings.csv) and [`hyperparameters.csv`](products/csv/hyperparameters.csv) files. They are also showcased and analyzed in a [notebook](python/notebook.ipynb).
 
 ## Dependencies
 
