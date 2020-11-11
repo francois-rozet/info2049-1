@@ -146,32 +146,25 @@ class SentimentDataset(data.Dataset):
 
 	Args:
 		data: list of (label, text) pairs
-		vocab: mapping from word to index
-		tokenizer: text tokenizer
+		indexer: text indexer
 	"""
 
 	def __init__(
 		self,
 		data, # list[tuple[int, str]]
-		vocab: tt.vocab.Vocab,
-		tokenizer # callable[str] -> iterable[str]
+		indexer # callable[str] -> list[int]
 	):
 		super().__init__()
 
 		self.data = data
-		self.vocab = vocab
-		self.tokenizer = tokenizer
+		self.indexer = indexer
 
 	def __len__(self) -> int:
 		return len(self.data)
 
 	def __getitem__(self, idx: int): # -> tuple[torch.Tensor, int]
 		target, text = self.data[idx]
-
-		return (
-			torch.tensor([self.vocab[t] for t in self.tokenizer(text)]),
-			target
-		)
+		return torch.tensor(self.indexer(text)), target
 
 
 class SeqCollator:
@@ -232,6 +225,22 @@ class Tokenizer:
 	def __call__(self, text: str): # -> generator[str]
 		for t in self.tokenizer(text):
 			yield t.text.lower()
+
+
+class Indexer:
+	r"""Transform text to sequence of indices.
+
+	Args:
+		stoi: token to index (string to index) mapping
+		tokenizer: text tokenizer
+	"""
+
+	def __init__(self, stoi: dict, tokenizer):
+		self.stoi = stoi
+		self.tokenizer = tokenizer
+
+	def __call__(self, text: str): # -> list[int]
+		return [self.stoi[t] for t in self.tokenizer(text)]
 
 
 class Frequencer:
