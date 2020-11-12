@@ -4,6 +4,7 @@
 # Imports #
 ###########
 
+import contextlib
 import numpy as np
 import os
 import pandas as pd
@@ -55,20 +56,21 @@ def eval(
 	else:
 		model.train()
 
-	for inputs, lengths, targets in tqdm(loader):
-		outputs = model(inputs.to(device), lengths)
+	with torch.no_grad() if optimizer is None else contextlib.nullcontext():
+		for inputs, lengths, targets in tqdm(loader):
+			outputs = model(inputs.to(device), lengths)
 
-		if criterion is not None:
-			loss = criterion(outputs, targets.to(device))
-			losses.append(loss.tolist())
+			if criterion is not None:
+				loss = criterion(outputs, targets.to(device))
+				losses.append(loss.tolist())
 
-		if optimizer is not None:
-			optimizer.zero_grad()
-			loss.backward()
-			optimizer.step()
+			if optimizer is not None:
+				optimizer.zero_grad()
+				loss.backward()
+				optimizer.step()
 
-		predictions.extend(model.prediction(outputs).argmax(dim=1).tolist())
-		labels.extend(targets.tolist())
+			predictions.extend(model.prediction(outputs).argmax(dim=1).tolist())
+			labels.extend(targets.tolist())
 
 	return predictions, labels, losses
 
