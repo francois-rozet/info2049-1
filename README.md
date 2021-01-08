@@ -47,3 +47,7 @@ python report.py output.csv -dataset IMDB -net GRU -embedding glove.6B.100d -bid
 * **Maxime Meurisse** - [meurissemax](https://github.com/meurissemax)
 * **François Rozet** - [francois-rozet](https://github.com/francois-rozet)
 * **Valentin Vermeylen** - [ValentinVermeylen](https://github.com/ValentinVermeylen)
+
+## Score
+
+This project received a score of 35/35.
